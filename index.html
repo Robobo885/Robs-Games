@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Runner — расширенная версия</title>
+  <style>
+    :root{ --bg:#071226; --panel:#0e2230; --accent:#ffd166; --muted:#9fb1c8 }
+    html,body{height:100%;margin:0;font-family:Inter, Roboto, Arial; background:var(--bg); color:#e6eef8}
+    #wrap{max-width:980px;margin:14px auto;padding:14px}
+    header{display:flex;align-items:center;justify-content:space-between}
+    h1{font-size:18px;margin:0}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{background:rgba(255,255,255,0.04);border:0;color:inherit;padding:8px 10px;border-radius:8px;cursor:pointer}
+    #canvas{width:100%;border-radius:10px;display:block;margin-top:12px;background:linear-gradient(180deg,#061221,#052033)}
+    .panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); padding:10px;border-radius:10px;margin-top:10px}
+    .row{display:flex;gap:10px;align-items:center}
+    .badge{background:rgba(255,255,255,0.03);padding:6px 8px;border-radius:8px;font-weight:600}
+    /* Menu */
+    #menu{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;align-items:center;justify-content:center}
+    #menuCard{width:92%;max-width:640px;background:linear-gradient(180deg,#0a1b28,#071022);padding:18px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.6)}
+    .menu-row{display:flex;align-items:center;justify-content:space-between;margin:8px 0}
+    .skins{display:flex;gap:8px}
+    .skin{width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+    .selected{outline:3px solid rgba(255,209,102,0.18)}
+    label{font-size:14px}
+    footer{margin-top:8px;font-size:13px;color:var(--muted)}
+    @media (max-width:480px){#menuCard{padding:12px} .skin{width:40px;height:40px}}
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <header>
+      <h1>Runner — расширенная версия (монеты, двойной прыжок, скины, музыка)</h1>
+      <div class="controls">
+        <div class="badge">Счёт: <span id="score">0</span></div>
+        <div class="badge">Рекорд: <span id="best">0</span></div>
+        <button id="btnMenu">Меню</button>
+        <button id="btnMute">🔊</button>
+      </div>
+    </header>
+
+    <canvas id="canvas" width="980" height="360"></canvas>
+
+    <div class="panel">
+      <div class="row">
+        <div>Управление: пробел / стрелка вверх — прыжок. Клик/тап — прыжок. P — пауза.</div>
+        <div style="margin-left:auto;color:var(--muted)">Сделано для теста. Для упаковки: Cordova или Capacitor.</div>
+      </div>
+    </div>
+
+    <footer>Чтобы получить APK, используй Cordova / Capacitor — я могу дать инструкции.</footer>
+
+    <!-- Меню -->
+    <div id="menu">
+      <div id="menuCard">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div style="font-size:20px">Меню</div>
+          <div style="color:var(--muted)">Выбери скин и сложность</div>
+        </div>
+
+        <div class="menu-row">
+          <div>
+            <label>Сложность:</label>
+            <select id="difficulty">
+              <option value="easy">Лёгкая</option>
+              <option value="normal" selected>Нормальная</option>
+              <option value="hard">Сложная</option>
+            </select>
+          </div>
+          <div>
+            <label>Звуки:</label>
+            <input type="checkbox" id="soundToggle" checked />
+          </div>
+        </div>
+
+        <div style="margin-top:8px">Скины:</div>
+        <div class="skins" id="skins"></div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+          <button id="btnStart">Старт</button>
+          <button id="btnReset">Сброс рекорда</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+(() => {
+  // ---- Canvas setup ----
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width; const H = canvas.height;
+  const groundY = H - 64;
+
+  // DOM
+  const scoreEl = document.getElementById('score');
+  const bestEl = document.getElementById('best');
+  const btnMenu = document.getElementById('btnMenu');
+  const btnMute = document.getElementById('btnMute');
+  const menu = document.getElementById('menu');
+  const btnStart = document.getElementById('btnStart');
+  const difficultySel = document.getElementById('difficulty');
+  const soundToggle = document.getElementById('soundToggle');
+  const skinsWrap = document.getElementById('skins');
+  const btnReset = document.getElementById('btnReset');
+
+  // State
+  let running = false;
+  let lastTs = 0;
+  let speedBase = 320;
+  let speed = speedBase;
+  let spawnTimer = 0.9;
+  let score = 0;
+  let best = parseInt(localStorage.getItem('runner_best_v2') || '0', 10);
+  bestEl.textContent = best;
+  let muted = false;
+  let difficulty = 'normal';
+
+  // Player with skins
+  const skins = [
+    {id:'sun', label:'Жёлтый', draw: (x,y,w,h)=>{ ctx.fillStyle='#ffd166'; roundRect(x,y,w,h,6); ctx.fill(); ctx.fillStyle='#073049'; ctx.fillRect(x+w*0.55,y+h*0.25, w*0.14, h*0.14); }},
+    {id:'blue', label:'Синий', draw: (x,y,w,h)=>{ ctx.fillStyle='#4cc9f0'; roundRect(x,y,w,h,6); ctx.fill(); ctx.fillStyle='#092a3a'; ctx.fillRect(x+w*0.58,y+h*0.28, w*0.12, h*0.12); }},
+    {id:'neon', label:'Неон', draw: (x,y,w,h)=>{ ctx.fillStyle='#ff6b6b'; roundRect(x,y,w,h,6); ctx.fill(); ctx.fillStyle='#fff'; ctx.fillRect(x+w*0.58,y+h*0.28, w*0.12, h*0.12); ctx.globalAlpha=0.12; ctx.fillStyle='#7b2cbf'; ctx.fillRect(x-6,y-6,w+12,h+12); ctx.globalAlpha=1; }},
+    {id:'green', label:'Зелёный', draw: (x,y,w,h)=>{ ctx.fillStyle='#8bdc7c'; roundRect(x,y,w,h,6); ctx.fill(); ctx.fillStyle='#05400a'; ctx.fillRect(x+w*0.56,y+h*0.26, w*0.1, h*0.1); }},
+  ];
+  let curSkin = localStorage.getItem('runner_skin_v2') || 'sun';
+
+  // Player properties
+  const player = {x:96,y:groundY-56,w:36,h:56,vy:0,onGround:true,jumpsLeft:2,maxJumps:2,invincible:0};
+
+  // Obstacles & coins
+  const obstacles = [];
+  const coins = [];
+
+  // Parallax stuff
+  const clouds = [];
+  for(let i=0;i<6;i++) clouds.push({x:Math.random()*W,y:Math.random()*80+20,spd:Math.random()*12+6,sz:Math.random()*40+40});
+
+  // Audio (procedural)
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  const audioCtx = AudioCtx ? new AudioCtx() : null;
+  function tone(freq, duration=0.08, type='sine'){ if(!audioCtx || muted) return; const o = audioCtx.createOscillator(); const g = audioCtx.createGain(); o.type=type; o.frequency.value=freq; o.connect(g); g.connect(audioCtx.destination); g.gain.setValueAtTime(0.0001, audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.18, audioCtx.currentTime+0.01); o.start(); g.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime+duration); o.stop(audioCtx.currentTime+duration+0.02); }
+
+  // Simple music loop (soft) using oscillators
+  let musicLoop = null;
+  function startMusic(){ if(!audioCtx || muted) return; if(musicLoop) return; const base = audioCtx.createGain(); base.gain.value=0.04; base.connect(audioCtx.destination); const osc1 = audioCtx.createOscillator(); osc1.frequency.value = 110; osc1.type='sine'; osc1.connect(base); osc1.start(); musicLoop = {base,osc1}; }
+  function stopMusic(){ if(!musicLoop) return; try{ musicLoop.osc1.stop(); }catch(e){} musicLoop.base.disconnect(); musicLoop=null; }
+
+  // Helpers
+  function rand(a,b){ return Math.random()*(b-a)+a }
+  function roundRect(x,y,w,h,r){ ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+  function collides(a,b){ return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y; }
+
+  // Skins UI
+  function renderSkins(){ skinsWrap.innerHTML=''; skins.forEach(s=>{ const el = document.createElement('div'); el.className='skin'; el.title = s.label; el.dataset.id = s.id; el.style.position='relative'; el.style.background='rgba(255,255,255,0.02)'; el.style.borderRadius='8px'; if(s.id===curSkin) el.classList.add('selected'); el.addEventListener('click', ()=>{ curSkin = s.id; localStorage.setItem('runner_skin_v2', curSkin); renderSkins(); }); skinsWrap.appendChild(el); // draw inside canvas then copy
+    const c = document.createElement('canvas'); c.width=44; c.height=44; const cctx = c.getContext('2d'); s.draw.call(cctx, 6,4,32,36); el.appendChild(c); }); }
+  renderSkins();
+
+  // Menu handlers
+  btnMenu.addEventListener('click', ()=>{ menu.style.display = 'flex'; });
+  btnStart.addEventListener('click', ()=>{ difficulty = difficultySel.value; muted = !soundToggle.checked ? true : false; btnMute.textContent = muted ? '🔇' : '🔊'; startGame(); menu.style.display='none'; });
+  btnReset.addEventListener('click', ()=>{ if(confirm('Сбросить рекорд?')){ best=0; localStorage.setItem('runner_best_v2','0'); bestEl.textContent='0'; } });
+  btnMute.addEventListener('click', ()=>{ muted = !muted; btnMute.textContent = muted ? '🔇' : '🔊'; if(muted) stopMusic(); else if(running) startMusic(); });
+
+  // Spawn functions
+  function spawnObstacle(){ const h = Math.round(rand(22,68)); const w = Math.round(rand(18,50)); obstacles.push({x:W+60,y:groundY-h,w,h,passed:false}); }
+  function spawnCoin(){ const r = 12; coins.push({x:W+Math.random()*200+40, y: groundY - (Math.random()*140+80), r, collected:false}); }
+
+  // Adjust parameters by difficulty
+  function applyDifficulty(){ if(difficulty==='easy'){ speedBase=260; player.maxJumps=2; } else if(difficulty==='normal'){ speedBase=320; player.maxJumps=2; } else { speedBase=380; player.maxJumps=2; } player.jumpsLeft = player.maxJumps; }
+
+  // Restart
+  function resetGame(){ obstacles.length=0; coins.length=0; clouds.forEach(c=>c.x=Math.random()*W); player.y = groundY - player.h; player.vy = 0; player.onGround = true; player.jumpsLeft = player.maxJumps; player.invincible = 0; score=0; speed=speedBase; spawnTimer=0.9; lastTs = performance.now(); }
+
+  function startGame(){ applyDifficulty(); resetGame(); running=true; if(!muted) startMusic(); requestAnimationFrame(loop); }
+
+  // Input
+  function doJump(){ if(!running) return; if(player.jumpsLeft>0){ player.vy = -660; player.onGround=false; player.jumpsLeft--; tone(520,0.06); } }
+  window.addEventListener('keydown',(e)=>{ if(e.code==='Space' || e.code==='ArrowUp'){ e.preventDefault(); doJump(); } if(e.code==='KeyP'){ running = !running; if(running){ lastTs = performance.now(); requestAnimationFrame(loop); if(!muted) startMusic(); } else stopMusic(); } });
+  canvas.addEventListener('touchstart',(e)=>{ e.preventDefault(); if(!running){ /* open menu? no */ } doJump(); });
+  canvas.addEventListener('mousedown',(e)=>{ e.preventDefault(); doJump(); });
+
+  // Main loop
+  function loop(ts){ if(!running) return; const dt = Math.min(0.06, (ts - lastTs)/1000); lastTs = ts; // difficulty scaling
+    speed += dt * 8; // acceleration
+    // spawn
+    spawnTimer -= dt; if(spawnTimer <= 0){ if(Math.random() < 0.6) spawnObstacle(); if(Math.random() < 0.5) spawnCoin(); spawnTimer = rand(0.6,1.5) - (speed-300)/1800; if(spawnTimer<0.36) spawnTimer=0.36; }
+    // physics
+    const gravity = 2200; player.vy += gravity*dt; player.y += player.vy*dt; if(player.y + player.h >= groundY){ player.y = groundY - player.h; player.vy = 0; player.onGround = true; player.jumpsLeft = player.maxJumps; }
+    // obstacles update
+    for(let i=obstacles.length-1;i>=0;i--){ const o = obstacles[i]; o.x -= speed*dt; if(!o.passed && o.x + o.w < player.x){ o.passed=true; score += 15; tone(750,0.03); } if(o.x + o.w < -80) obstacles.splice(i,1); }
+    // coins update
+    for(let i=coins.length-1;i>=0;i--){ const c = coins[i]; c.x -= speed*dt; if(!c.collected && Math.abs((c.x + c.r/2) - (player.x + player.w/2)) < 36 && Math.abs((c.y + c.r/2) - (player.y + player.h/2)) < 36){ c.collected=true; score += 50; tone(980,0.06,'square'); } if(c.x + c.r < -60) coins.splice(i,1); }
+    // collision
+    if(player.invincible<=0){ for(const o of obstacles){ if(collides(player,o)){ // game over
+          running=false; stopMusic(); tone(120,0.22,'sawtooth'); if(score>best){ best=score; localStorage.setItem('runner_best_v2',String(best)); bestEl.textContent=best; } setTimeout(()=>{ draw(); ctx.fillStyle='rgba(2,6,12,0.6)'; ctx.fillRect(0,0,W,H); ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.font='28px sans-serif'; ctx.fillText('Игра окончена', W/2, H/2 - 6); ctx.font='16px sans-serif'; ctx.fillText("Открыть меню для рестарта", W/2, H/2 + 22); },80); return; } } }
+    // score over time
+    score += Math.floor(32*dt);
+    scoreEl.textContent = score;
+
+    // clouds movement
+    for(const c of clouds){ c.x -= c.spd*dt; if(c.x + c.sz < -40) c.x = W + Math.random()*60; }
+
+    draw(); requestAnimationFrame(loop);
+  }
+
+  // Draw
+  function draw(){ // background
+    ctx.clearRect(0,0,W,H);
+    // sky gradient
+    const g = ctx.createLinearGradient(0,0,0,H); g.addColorStop(0,'#071226'); g.addColorStop(1,'#052033'); ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+    // stars (simple)
+    for(let i=0;i<60;i++){ const x = (i*47 + (Date.now()/30|0)* (i%3?0.02:0.01))%W; const y = (i*31)%120 + 10; ctx.fillStyle='rgba(255,255,255,0.03)'; ctx.fillRect(x,y,1.5,1.5); }
+    // clouds
+    for(const c of clouds){ ctx.globalAlpha=0.9; ctx.fillStyle='rgba(255,255,255,0.04)'; roundRect(c.x,c.y,c.sz,c.sz*0.45,20); ctx.fill(); ctx.globalAlpha=1; }
+
+    // ground
+    ctx.fillStyle='#0d2a36'; ctx.fillRect(0,groundY, W, H-groundY);
+    for(let x=0;x<W;x+=28){ ctx.fillStyle = (x%56===0)?'#124b5f':'#0c3b4a'; ctx.fillRect(x, groundY, 18, 8); }
+
+    // coins
+    for(const c of coins){ if(c.collected) continue; ctx.beginPath(); ctx.fillStyle='gold'; ctx.ellipse(c.x,c.y,c.r, c.r*0.7,0,0,Math.PI*2); ctx.fill(); ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillRect(c.x-4,c.y-2,6,2); }
+
+    // obstacles
+    for(const o of obstacles){ ctx.fillStyle='#ef476f'; roundRect(o.x,o.y,o.w,o.h,6); ctx.fill(); }
+
+    // player (skin draw)
+    const skin = skins.find(s=>s.id===curSkin) || skins[0]; ctx.save(); skin.draw(player.x, player.y, player.w, player.h); ctx.restore();
+
+    // HUD inside canvas
+    ctx.fillStyle='rgba(255,255,255,0.04)'; ctx.fillRect(W-240,8,228,38);
+    ctx.fillStyle='#e6eef8'; ctx.font='18px sans-serif'; ctx.textAlign='left'; ctx.fillText('Очки: '+score, W-230, 32);
+  }
+
+  // Unlock audio on first gesture
+  function unlockAudio(){ if(audioCtx && audioCtx.state==='suspended') audioCtx.resume(); window.removeEventListener('touchstart', unlockAudio); window.removeEventListener('mousedown', unlockAudio); window.removeEventListener('keydown', unlockAudio); }
+  window.addEventListener('touchstart', unlockAudio); window.addEventListener('mousedown', unlockAudio); window.addEventListener('keydown', unlockAudio);
+
+  // Responsive canvas display
+  function fit(){ const ratio = W/H; const w = Math.min(window.innerWidth - 40, 980); canvas.style.width = w + 'px'; canvas.style.height = Math.round(w/ratio) + 'px'; }
+  window.addEventListener('resize', fit); fit();
+
+  // Show menu initially
+  menu.style.display='flex';
+
+})();
+</script>
+</body>
+</html>
